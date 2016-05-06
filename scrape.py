@@ -68,7 +68,7 @@ if new_hashed == hashed:
 # Otherwise a new grade has been posted -- send e-mail notification
 # Create e-mail message
 elif settings['EMAIL'] == True:
-   msg = MIMEText(message)
+    msg = MIMEText(message)
     msg['From'] = ''
     msg['To'] = ''
     msg['Subject'] = ''
