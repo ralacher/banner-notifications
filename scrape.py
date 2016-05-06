@@ -3,82 +3,85 @@
 import requests
 import time
 import sys
-import mandrill
 from lxml import html
-
+import os
 from settings import settings
-
-# MailChimp Client
-mandrill_client = mandrill.Mandrill(settings['MAILCHIMP_KEY'])
+from email.mime.text import MIMEText
+from subprocess import Popen, PIPE
 
 # Previous stores previous grade tuple retrieved from request
 previous = None
 # Grades stores current grade tuple retrieved from request
 grades = None
 
-# Run until all grades are posted
-while True:
-    # Create and establish session
-    s = requests.Session()
-    request = s.get(settings['BASE_URL'] + 'twbkwbis.P_WWWLogin')
+# Classes stores list of class names defined in settings
+classes = settings['CLASSES'] 
 
-    # POST login information
-    response = s.post(settings['BASE_URL'] + 'twbkwbis.P_ValLogin',
-                      data=dict(sid=settings['USERNAME'],
-                                PIN=settings['PASSWORD']))
+# hashed will store hashed value of class names, grades
+hashed = None
 
-    # POST semester to retrieve (Fall 2015)
-    response = s.post(settings['BASE_URL'] + 'bwcklibs.P_StoreTerm',
-                      data=dict(term_in='201508'))
+# Read file containing previous check
+if 'grades.txt' in os.listdir(settings['PATH']):
+    f = open(settings['PATH'] + 'grades.txt', 'rw')
+    hashed = f.read()
+else:
+    f = open(settings['PATH'] + 'grades.txt', 'w+')
+f.close()
 
-    # GET posted grades
-    response = s.get(settings['BASE_URL'] + 'bwskfshd.P_CrseSchdDetl')
+# Create and establish session
+s = requests.Session()
+request = s.get(settings['BASE_URL'] + 'twbkwbis.P_WWWLogin')
 
-    # Create parseable HTML from response
-    content = html.fromstring(response.content)
+# POST login information
+response = s.post(settings['BASE_URL'] + 'twbkwbis.P_ValLogin',
+                  data=dict(sid=settings['USERNAME'],
+                            PIN=settings['PASSWORD']))
 
-    # Parse HTMl using XPATH selectors
-    info = content.xpath('//td[@rowspan]//p[@class="centeraligntext"]/text()')
+# POST semester to retrieve (Fall 2015)
+response = s.post(settings['BASE_URL'] + 'bwcklibs.P_StoreTerm',
+                  data=dict(term_in=settings['SEMESTER']))
 
-    # Create tuples containing course information
-    zipped = zip(*[iter(info)]*5)
-    grades = [z[-1] for z in zipped]
+# GET posted grades
+response = s.get(settings['BASE_URL'] + 'bwskfshd.P_CrseSchdDetl')
 
-    # If previous grade tuple is equal to current grade tuple, don't do anything
-    # Grades haven't been posted
-    if previous == grades:
-        pass
+# Create parseable HTML from response
+content = html.fromstring(response.content)
 
-    # Otherwise a new grade has been posted -- send e-mail notification
-    else:
-        # Try to send e-mail notification
-        try:
-            # Create message
-            message = {
-                'from_email': settings['MY_EMAIL'],
-                'from_name': settings['MY_NAME'],
-                'subject': 'Grades Posted',
-                'html': '<p>Grades are updated: %s</p>' % grades,
-                'to': [{
-                    'email': settings['MY_EMAIL'],
-                    'name': settings['MY_NAME'],
-                    'type': 'to'}]
-            }
+# Parse HTMl using XPATH selectors
+info = content.xpath('//td[@rowspan]//p[@class="centeraligntext"]/text()')
 
-            # Send message
-            result = mandrill_client.messages.send(message=message,
-                                                   async=False,
-                                                   ip_pool='Main Pool')
-        except mandrill.Error, e:
-            # Ignore errors
-            pass
+# Create tuples containing course information
+zipped = zip(*[iter(info)]*5)
+grades = [z[-1] for z in zipped]
 
-    # Exit if all grades are posted
-    # u'\xa0' is blank character returned for grades that haven't been posted
-    if u'\xa0' not in grades:
-        sys.exit(0)
+# Create message for e-mail 
+message = str(zip(classes, grades))
 
-    # Set previous to current query
-    previous = grades
-    # Sleep for 10 minutes
-    time.sleep(600)
+# Create new hash from message content
+new_hashed = str(hash(message))
+
+# If previous grade hash is equal to new hash, don't do anything
+# Grades haven't been posted
+if new_hashed == hashed:
+    pass
+
+# Otherwise a new grade has been posted -- send e-mail notification
+# Create e-mail message
+elif settings['EMAIL'] == True:
+   msg = MIMEText(message)
+    msg['From'] = ''
+    msg['To'] = ''
+    msg['Subject'] = ''
+
+    # Pipe message to sendmail
+    p = Popen(['/usr/sbin/sendmail', '-t', '-oi'], stdin=PIPE)
+    p.communicate(msg.as_string())
+
+    # Open grades and overwrite hashed message with new hashed message
+    f = open(settings['PATH'] + 'grades.txt', 'w+')
+    f.write(new_hashed)
+    f.close()
+
+# Don't send email, just print to stdout
+else:
+    print message
